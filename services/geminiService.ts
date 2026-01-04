@@ -7,7 +7,8 @@ const getApiKey = (): string => {
   return key;
 };
 
-const MODEL_NAME = "gemini-3-pro-preview";
+// Usamos el modelo FLASH para velocidad extrema en la extracción
+const MODEL_NAME = "gemini-3-flash-preview"; 
 
 // Helper para limpiar respuestas JSON que vienen envueltas en Markdown o truncadas
 const cleanJsonOutput = (text: string | undefined): string => {
@@ -33,6 +34,8 @@ export const enrichProfiles = async (
   targetCategory: string
 ): Promise<Profile[]> => {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
+
+  if (rawProfiles.length === 0) return [];
 
   // optimizacion: enviamos lotes para clasificar
   const prompt = `

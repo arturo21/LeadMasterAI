@@ -93,9 +93,102 @@ CREATE TABLE IF NOT EXISTS campaign_logs (
   static getNodeScript(config: MailgunConfig): string {
     return `/**
  * LEAD MASTER AI - WORKER
- * Usa este script para despliegues dedicados.
+ * Usa este script para despliegues dedicados (VPS, EC2).
+ * Este worker lee de la base de datos y envía correos automáticamente.
  */
-// ... (El contenido de descarga se mantiene igual para referencia)
+
+import mysql from 'mysql2/promise';
+import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
+dotenv.config();
+
+// CONFIGURACIÓN (Viene de tus variables de entorno)
+const SMTP_CONFIG = {
+    host: process.env.SMTP_HOST || '${config.smtpHost}',
+    port: Number(process.env.SMTP_PORT) || ${config.smtpPort},
+    secure: Number(process.env.SMTP_PORT) === 465,
+    auth: {
+        user: process.env.SMTP_USER || '${config.smtpUser}',
+        pass: process.env.SMTP_PASS || '${config.smtpPass}'
+    }
+};
+
+const DB_CONFIG = {
+    host: process.env.DB_HOST || '${config.dbHost || 'localhost'}',
+    user: process.env.DB_USER || '${config.dbUser || 'root'}',
+    password: process.env.DB_PASS || '${config.dbPass || ''}',
+    database: process.env.DB_NAME || '${config.dbName || 'lead_master_db'}'
+};
+
+const FROM_EMAIL = process.env.SENDER_EMAIL || '${config.fromEmail}';
+
+// MOTOR DE ENVÍO
+async function runWorker() {
+    console.log("[WORKER] Iniciando ciclo de procesamiento...");
+    let connection;
+
+    try {
+        // 1. Conexión a Base de Datos
+        connection = await mysql.createConnection(DB_CONFIG);
+        
+        // 2. Configurar Transporte SMTP
+        const transporter = nodemailer.createTransport(SMTP_CONFIG);
+        await transporter.verify();
+        
+        // 3. Buscar leads pendientes (Lote de 5)
+        const [rows] = await connection.execute(
+            'SELECT * FROM leads WHERE status = "PENDING" LIMIT 5'
+        );
+
+        if (rows.length === 0) {
+            console.log("[WORKER] No hay correos pendientes. Durmiendo...");
+            return;
+        }
+
+        console.log(\`[WORKER] Procesando \${rows.length} correos...\`);
+
+        // 4. Procesar Lote
+        for (const lead of rows) {
+            try {
+                console.log(\`[WORKER] Enviando a \${lead.email}...\`);
+                
+                // Enviar Correo
+                await transporter.sendMail({
+                    from: FROM_EMAIL,
+                    to: lead.email,
+                    subject: "Propuesta de Colaboración", // Idealmente dinámico
+                    html: \`<p>Hola \${lead.name},</p><p>Te contactamos para...</p>\` // HTML dinámico
+                });
+
+                // Actualizar estado a ENVIADO
+                await connection.execute(
+                    'UPDATE leads SET status = "SENT", updated_at = NOW() WHERE email = ?',
+                    [lead.email]
+                );
+                console.log(\`[OK] \${lead.email} enviado.\`);
+
+            } catch (err) {
+                console.error(\`[ERROR] Fallo en \${lead.email}: \`, err.message);
+                
+                // Actualizar estado a ERROR
+                await connection.execute(
+                    'UPDATE leads SET status = "ERROR", last_error = ?, attempts = attempts + 1 WHERE email = ?',
+                    [err.message, lead.email]
+                );
+            }
+        }
+
+    } catch (error) {
+        console.error("[CRITICAL WORKER ERROR]", error);
+    } finally {
+        if (connection) await connection.end();
+    }
+}
+
+// Loop Infinito (Polling cada 10 segundos)
+setInterval(runWorker, 10000);
+runWorker(); // Ejecutar inmediatamente al inicio
+console.log("🚀 WORKER ACTIVO - Esperando trabajos...");
 `;
   }
 

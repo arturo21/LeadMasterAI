@@ -8,56 +8,134 @@ como el backend (Node.js) simultáneamente. El backend es el encargado de comuni
 con Mailgun/SMTP.
 
 --------------------------------------------------------------------------------
-INSTRUCCIONES DE INICIO RÁPIDO
+1. INSTRUCCIONES DE INICIO RÁPIDO
 --------------------------------------------------------------------------------
 
-1. Instalar dependencias (Solo la primera vez)
+A. Instalar dependencias (Solo la primera vez)
    Abre una terminal en la carpeta del proyecto y ejecuta:
    $ npm install
 
-2. Compilar el Frontend
+B. Compilar el Frontend
    Antes de correr el modo producción, necesitamos construir la app de React:
    $ npm run build
 
-3. EJECUTAR EL SERVIDOR COMPLETO
+C. EJECUTAR EL SERVIDOR COMPLETO
    Este comando inicia el Backend (puerto 3001) y sirve el Frontend compilado.
    ES LA FORMA CORRECTA DE USAR LA APP PARA ENVÍOS REALES.
    
    $ npm run server
 
-4. Acceder a la Aplicación
+D. Acceder a la Aplicación
    Abre en tu navegador: http://localhost:3001
 
 --------------------------------------------------------------------------------
-MODO DESARROLLO (Para programadores)
---------------------------------------------------------------------------------
-Si quieres editar el código y ver cambios en tiempo real:
-
-Terminal 1 (Backend):
-$ npm run server
-
-Terminal 2 (Frontend):
-$ npm run dev
-
-Accede a http://localhost:3000 (Vite hará proxy de las peticiones /api al 3001).
-
---------------------------------------------------------------------------------
-SOLUCIÓN DE PROBLEMAS
+2. SOLUCIÓN DE PROBLEMAS COMUNES
 --------------------------------------------------------------------------------
 
-A) "Backend desconectado" al intentar enviar correos:
-   Significa que no has ejecutado el paso 3 (`npm run server`). La interfaz gráfica
-   está cargada pero no hay nadie "escuchando" para enviar los emails.
+- "Backend desconectado": Asegúrate de haber ejecutado `npm run server`.
+- La tabla de Leads no carga: Si la IA tarda, el sistema hará hasta 3 reintentos.
+  Espera unos segundos.
+- Error SMTP: Verifica que tu puerto sea 587 (TLS) o 465 (SSL).
 
-B) Error de SMTP / Credenciales:
-   Ve a la sección "Configuración" en la app.
-   Asegúrate de poner el Host (ej. smtp.gmail.com), Puerto (587), Usuario y Password.
-   
-   Si usas Gmail, DEBES usar una "Contraseña de Aplicación", no tu contraseña normal.
-   (Gestionar cuenta Google > Seguridad > Verificación en 2 pasos > Contraseñas de aplicaciones).
+--------------------------------------------------------------------------------
+ANEXO A: MÓDULO DE CONFIGURACIÓN (SQL SCHEMA)
+--------------------------------------------------------------------------------
+Ejecuta esto en tu base de datos MySQL/MariaDB para preparar el entorno de producción:
 
-C) El scraping se cuelga:
-   Asegúrate de tener una API KEY de Gemini válida en tu archivo .env o en el código.
+CREATE DATABASE IF NOT EXISTS lead_master_db;
+USE lead_master_db;
+
+CREATE TABLE IF NOT EXISTS leads (
+    email VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'PENDING', -- PENDING, SENT, ERROR
+    attempts INT DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS campaign_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255),
+    action VARCHAR(50),
+    details TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (email) REFERENCES leads(email)
+);
+
+--------------------------------------------------------------------------------
+ANEXO B: SCRIPT COMPLETO DE ENVÍO DE CORREOS (WORKER.JS)
+--------------------------------------------------------------------------------
+Usa este script si deseas ejecutar el worker en un servidor dedicado independiente.
+
+import mysql from 'mysql2/promise';
+import nodemailer from 'nodemailer';
+
+// CONFIGURACIÓN
+const SMTP_CONFIG = {
+    host: 'smtp.tuservidor.com',
+    port: 587,
+    auth: { user: 'tu_usuario', pass: 'tu_password' }
+};
+
+const DB_CONFIG = {
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'lead_master_db'
+};
+
+async function runWorker() {
+    console.log("[WORKER] Buscando correos pendientes...");
+    let connection;
+
+    try {
+        connection = await mysql.createConnection(DB_CONFIG);
+        const transporter = nodemailer.createTransport(SMTP_CONFIG);
+        
+        // Buscar 10 pendientes
+        const [rows] = await connection.execute(
+            'SELECT * FROM leads WHERE status = "PENDING" LIMIT 10'
+        );
+
+        if (rows.length === 0) return;
+
+        for (const lead of rows) {
+            try {
+                // Enviar
+                await transporter.sendMail({
+                    from: 'tu@email.com',
+                    to: lead.email,
+                    subject: 'Asunto...',
+                    html: '<p>Contenido...</p>'
+                });
+
+                // Marcar como ENVIADO
+                await connection.execute(
+                    'UPDATE leads SET status = "SENT" WHERE email = ?', [lead.email]
+                );
+                console.log(`[OK] Enviado a ${lead.email}`);
+
+            } catch (err) {
+                // Marcar ERROR
+                await connection.execute(
+                    'UPDATE leads SET status = "ERROR", last_error = ? WHERE email = ?',
+                    [err.message, lead.email]
+                );
+                console.error(`[ERROR] ${lead.email}: ${err.message}`);
+            }
+        }
+    } catch (e) {
+        console.error("Error General:", e);
+    } finally {
+        if (connection) await connection.end();
+    }
+}
+
+// Ejecutar bucle
+setInterval(runWorker, 5000); // Cada 5 segundos
+console.log("Worker iniciado.");
 
 ================================================================================
 Generated by Lead Master AI Architect v3.1
