@@ -72,7 +72,7 @@ export const AnalyticsDashboard: React.FC = () => {
     );
   }
 
-  const activeStats = selectedCampaign?.stats || { totalSent: 0, delivered: 0, uniqueOpens: 0 };
+  const activeStats = selectedCampaign?.stats || { totalSent: 0, delivered: 0, failed: 0, uniqueOpens: 0, totalOpens: 0 };
   const openRate = activeStats.totalSent > 0 ? (activeStats.uniqueOpens / activeStats.totalSent) * 100 : 0;
   
   // Get recent opens

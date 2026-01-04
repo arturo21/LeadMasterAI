@@ -9,12 +9,22 @@ const getApiKey = (): string => {
 
 const MODEL_NAME = "gemini-3-pro-preview";
 
-// Helper para limpiar respuestas JSON que vienen envueltas en Markdown
+// Helper para limpiar respuestas JSON que vienen envueltas en Markdown o truncadas
 const cleanJsonOutput = (text: string | undefined): string => {
   if (!text) return "[]";
+  
   // Eliminar bloques de código markdown ```json y ```
-  let clean = text.replace(/```json/g, "").replace(/```/g, "");
-  return clean.trim();
+  let clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  
+  // Fix Truncation (Si el array no se cierra correctamente)
+  if (clean.startsWith("[") && !clean.endsWith("]")) {
+     const lastBrace = clean.lastIndexOf("}");
+     if (lastBrace !== -1) {
+         clean = clean.substring(0, lastBrace + 1) + "]";
+     }
+  }
+  
+  return clean;
 };
 
 // --- GENERATIVE LAYER ---
@@ -50,6 +60,7 @@ export const enrichProfiles = async (
       config: {
         temperature: 0.1, // Bajamos temperatura para mayor precisión determinista
         responseMimeType: "application/json",
+        maxOutputTokens: 8192,
         responseSchema: {
           type: Type.ARRAY,
           items: {

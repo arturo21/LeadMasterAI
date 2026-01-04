@@ -3,7 +3,7 @@ import { MailgunConfig, Profile, LeadCategory } from '../types';
 import { MailgunService } from '../services/mailgunService';
 import { generateEmailTemplate } from '../services/geminiService';
 import { PersistenceService } from '../services/persistenceService';
-import { Send, Users, Wand2, UploadCloud, AlertCircle, Loader2, FileUp, Trash2, AtSign, Calendar, Megaphone, Radio, FileText, PenTool, Save, Beaker, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { Send, Users, Wand2, UploadCloud, AlertCircle, Loader2, FileUp, Trash2, AtSign, Calendar, Megaphone, Radio, FileText, PenTool, Save, Beaker, CheckCircle2, XCircle, Info, ServerCrash } from 'lucide-react';
 
 interface CampaignViewProps {
   recipients: Profile[];
@@ -27,7 +27,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
   // Test Email State
   const [testEmail, setTestEmail] = useState("");
   const [sendingTest, setSendingTest] = useState(false);
-  const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [testStatusMessage, setTestStatusMessage] = useState("");
   
   // Notification State
@@ -85,7 +85,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
     setTestStatusMessage("");
     setNotification(null);
 
-    // Validations
+    // 1. Validations Local
     if (!config.isConfigured) {
       const msg = "Configura SMTP en Ajustes primero.";
       addLog("ERROR: " + msg);
@@ -100,16 +100,23 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
       setTestStatusMessage(msg);
       return;
     }
-    if (!senderEmail) {
-       const msg = "Define el email del remitente.";
-       addLog("ERROR: " + msg);
+
+    // 2. Check Backend Connection
+    setSendingTest(true);
+    setTestStatus('sending');
+    const isBackendOnline = await MailgunService.verifyBackendStatus();
+    
+    if (!isBackendOnline) {
+       const msg = "Backend desconectado. Ejecuta 'npm run server'.";
+       addLog("CRITICAL ERROR: " + msg);
        setTestStatus('error');
-       setTestStatusMessage(msg);
+       setTestStatusMessage("Backend offline");
+       setNotification({ message: msg, type: 'error' });
+       setSendingTest(false);
        return;
     }
 
-    setSendingTest(true);
-    addLog(`🧪 Enviando prueba a ${testEmail}...`);
+    addLog(`🧪 Enviando prueba a ${testEmail} (REAL)...`);
 
     try {
       // Create a temporary config object merging the global config with the specific sender email
@@ -135,7 +142,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
       } else {
         addLog(`❌ Error en prueba: ${result.message}`);
         setTestStatus('error');
-        setTestStatusMessage(result.message);
+        setTestStatusMessage("Falló envío");
         setNotification({ message: `Error al enviar prueba: ${result.message}`, type: 'error' });
       }
     } catch (e: any) {
@@ -148,8 +155,116 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
     }
   };
 
-  // --- SMART FILE IMPORT LOGIC (CSV & DOC/HTML) ---
+  const handleSendCampaign = async () => {
+    if (!config.isConfigured) {
+      addLog("ERROR: Configura SMTP en la sección de Ajustes.");
+      setNotification({ message: "SMTP no configurado.", type: 'error' });
+      return;
+    }
+    if (validRecipients.length === 0) {
+      addLog("ERROR: No hay destinatarios con email válido.");
+      setNotification({ message: "No hay destinatarios válidos.", type: 'error' });
+      return;
+    }
+
+    setSending(true);
+    setNotification(null); // Clear previous
+    addLog("🔒 Verificando estado del servidor...");
+
+    // Check backend first
+    const isBackendOnline = await MailgunService.verifyBackendStatus();
+    if (!isBackendOnline) {
+       const msg = "NO SE PUEDE ENVIAR: El servidor Backend no está corriendo. Ejecuta 'npm run server' en tu terminal.";
+       addLog(msg);
+       setNotification({ message: msg, type: 'error' });
+       setSending(false);
+       return;
+    }
+
+    addLog("✅ Servidor ONLINE. Iniciando envío masivo...");
+
+    try {
+      setSaving(true);
+      const campaignRecord = await PersistenceService.saveCampaign(
+        subject,
+        campaignCategory,
+        htmlContent,
+        validRecipients
+      );
+      setSaving(false);
+      addLog("✅ Campaña persistida en Base de Datos. ID: " + campaignRecord.id.substring(0,8));
+      
+      addLog(`Iniciando entrega SMTP para ${validRecipients.length} contactos...`);
+      
+      let successCount = 0;
+      let failCount = 0;
+      const campaignConfig = { ...config, fromEmail: senderEmail };
+
+      for (const profile of validRecipients) {
+        // En un entorno real idealmente usaríamos una cola en el backend,
+        // pero para este modo híbrido, iteramos con cuidado.
+        const trackingPixel = `<img src="https://api.leadmaster.ai/track/open/${campaignRecord.id}/${profile.id}" width="1" height="1" style="display:none;" alt="" />`;
+        
+        let finalHtml = htmlContent
+          .replace(/{{username}}/g, profile.username)
+          .replace(/{{fullname}}/g, profile.fullName || profile.username);
+        
+        if (finalHtml.includes('</body>')) {
+          finalHtml = finalHtml.replace('</body>', `${trackingPixel}</body>`);
+        } else {
+          finalHtml += trackingPixel;
+        }
+
+        const result = await MailgunService.sendEmail(campaignConfig, profile.email!, subject, finalHtml);
+        
+        if (result.success) {
+          successCount++;
+          addLog(`✅ Enviado: ${profile.email}`);
+        } else {
+          failCount++;
+          addLog(`❌ Rebote: ${profile.email} - ${result.message}`);
+        }
+
+        // Rate Limiting del lado del cliente para no saturar
+        await new Promise(r => setTimeout(r, 600));
+      }
+
+      addLog(`=== FIN DE CAMPAÑA ===`);
+      addLog(`Entregados: ${successCount} | Fallidos: ${failCount}`);
+      
+      // Final Notification logic
+      if (failCount === 0) {
+        setNotification({ 
+            message: `¡Campaña finalizada! ${successCount} correos entregados exitosamente.`, 
+            type: 'success' 
+        });
+      } else if (successCount > 0) {
+        setNotification({ 
+            message: `Campaña completada. ${successCount} enviados, ${failCount} fallidos.`, 
+            type: 'error' // Usamos estilo 'error' (rojo/ambar) para llamar la atención sobre los fallos
+        });
+      } else {
+         setNotification({ 
+            message: `Error masivo: Ningún correo pudo ser entregado. Revisa credenciales.`, 
+            type: 'error' 
+        });
+      }
+      
+    } catch (error: any) {
+      addLog(`CRITICAL ERROR: ${error.message}`);
+      setNotification({ message: `Error crítico del sistema: ${error.message}`, type: 'error' });
+    } finally {
+      setSending(false);
+      setSaving(false);
+    }
+  };
+
+  // ... (Rest of imports and functions like processFile remain same)
+
+  // Drag & drop logic and handlers remain the same...
+  // (We are focusing on the send logic changes above)
   const processFile = (file: File) => {
+    // ... same as before
     const isCSV = file.name.endsWith('.csv');
     const isDOC = file.name.endsWith('.doc'); // HTML-based Word files from ExportService
 
@@ -299,100 +414,6 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       processFile(e.target.files[0]);
-    }
-  };
-
-  const handleSendCampaign = async () => {
-    if (!config.isConfigured) {
-      addLog("ERROR: Configura MailGun en la sección de Ajustes.");
-      setNotification({ message: "MailGun no está configurado.", type: 'error' });
-      return;
-    }
-    if (validRecipients.length === 0) {
-      addLog("ERROR: No hay destinatarios con email válido.");
-      setNotification({ message: "No hay destinatarios válidos.", type: 'error' });
-      return;
-    }
-    if (!senderEmail || !senderEmail.includes('@')) {
-      addLog("ERROR: El email del remitente no es válido.");
-      setNotification({ message: "Email de remitente inválido.", type: 'error' });
-      return;
-    }
-
-    setSending(true);
-    setNotification(null); // Clear previous
-    addLog("🔒 Iniciando protocolo de integridad de datos...");
-
-    try {
-      setSaving(true);
-      const campaignRecord = await PersistenceService.saveCampaign(
-        subject,
-        campaignCategory,
-        htmlContent,
-        validRecipients
-      );
-      setSaving(false);
-      addLog("✅ Campaña persistida en Base de Datos. ID: " + campaignRecord.id.substring(0,8));
-      
-      addLog(`Iniciando entrega SMTP para ${validRecipients.length} contactos...`);
-      
-      let successCount = 0;
-      let failCount = 0;
-      const campaignConfig = { ...config, fromEmail: senderEmail };
-
-      for (const profile of validRecipients) {
-        const trackingPixel = `<img src="https://api.leadmaster.ai/track/open/${campaignRecord.id}/${profile.id}" width="1" height="1" style="display:none;" alt="" />`;
-        
-        let finalHtml = htmlContent
-          .replace(/{{username}}/g, profile.username)
-          .replace(/{{fullname}}/g, profile.fullName || profile.username);
-        
-        if (finalHtml.includes('</body>')) {
-          finalHtml = finalHtml.replace('</body>', `${trackingPixel}</body>`);
-        } else {
-          finalHtml += trackingPixel;
-        }
-
-        const result = await MailgunService.sendEmail(campaignConfig, profile.email!, subject, finalHtml);
-        
-        if (result.success) {
-          successCount++;
-          addLog(`✅ Enviado: ${profile.email}`);
-        } else {
-          failCount++;
-          addLog(`❌ Rebote: ${profile.email}`);
-        }
-
-        await new Promise(r => setTimeout(r, 600));
-      }
-
-      addLog(`=== FIN DE CAMPAÑA ===`);
-      addLog(`Entregados: ${successCount} | Fallidos: ${failCount}`);
-      
-      // Final Notification logic
-      if (failCount === 0) {
-        setNotification({ 
-            message: `¡Campaña finalizada! ${successCount} correos entregados exitosamente.`, 
-            type: 'success' 
-        });
-      } else if (successCount > 0) {
-        setNotification({ 
-            message: `Campaña completada. ${successCount} enviados, ${failCount} fallidos.`, 
-            type: 'error' // Usamos estilo 'error' (rojo/ambar) para llamar la atención sobre los fallos
-        });
-      } else {
-         setNotification({ 
-            message: `Error masivo: Ningún correo pudo ser entregado.`, 
-            type: 'error' 
-        });
-      }
-      
-    } catch (error: any) {
-      addLog(`CRITICAL ERROR: ${error.message}`);
-      setNotification({ message: `Error crítico del sistema: ${error.message}`, type: 'error' });
-    } finally {
-      setSending(false);
-      setSaving(false);
     }
   };
 
@@ -694,7 +715,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
           <div className="text-slate-500 mb-2 font-bold uppercase tracking-wider text-[10px]">Log de Envío</div>
           {logs.length === 0 && <span className="text-slate-700">Esperando inicio de campaña...</span>}
           {logs.map((log, i) => (
-            <div key={i} className={`mb-1 ${log.includes('Fallo') || log.includes('ERROR') ? 'text-red-400' : 'text-green-400'}`}>
+            <div key={i} className={`mb-1 ${log.includes('Fallo') || log.includes('ERROR') || log.includes('Backend desconectado') ? 'text-red-400' : 'text-green-400'}`}>
               {log}
             </div>
           ))}

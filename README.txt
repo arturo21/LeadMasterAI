@@ -1,142 +1,64 @@
 ================================================================================
-INSTA-PROSPECT HYBRID ENGINE v3.0 - GUÍA DE DESPLIEGUE (SHARED HOSTING)
+INSTA-PROSPECT HYBRID ENGINE v3.1 - GUÍA DE EJECUCIÓN (ENTORNO REAL)
 ================================================================================
 
-Esta guía detalla cómo instalar la aplicación en un Hosting Compartido (cPanel, 
-Plesk, Hostinger, Namecheap, etc.) que soporte Node.js.
-
-ARQUITECTURA:
-1. FRONTEND: Archivos estáticos (HTML/JS/CSS) compilados.
-2. BACKEND: Proceso Node.js corriendo con Phusion Passenger (típico en cPanel).
+IMPORTANTE: 
+Para enviar correos electrónicos REALES, necesitas ejecutar tanto el frontend (Vite)
+como el backend (Node.js) simultáneamente. El backend es el encargado de comunicar
+con Mailgun/SMTP.
 
 --------------------------------------------------------------------------------
-REQUISITOS PREVIOS
---------------------------------------------------------------------------------
-1. Acceso a cPanel (o panel similar).
-2. Funcionalidad "Setup Node.js App" (o "Node.js Selector") activa en el hosting.
-3. Base de datos MySQL.
-4. Acceso al Administrador de Archivos o FTP.
-
---------------------------------------------------------------------------------
-FASE 1: PREPARACIÓN Y BUILD DEL FRONTEND (En tu PC Local)
+INSTRUCCIONES DE INICIO RÁPIDO
 --------------------------------------------------------------------------------
 
-1. Configura la API Key de Gemini:
-   - Crea un archivo `.env` en la raíz de tu proyecto local (junto a package.json).
-   - Agrega: VITE_API_KEY=tu_clave_de_google_ai_studio
-
-2. Genera los archivos de producción:
-   Abre tu terminal en la carpeta del proyecto y ejecuta:
+1. Instalar dependencias (Solo la primera vez)
+   Abre una terminal en la carpeta del proyecto y ejecuta:
    $ npm install
+
+2. Compilar el Frontend
+   Antes de correr el modo producción, necesitamos construir la app de React:
    $ npm run build
 
-   Esto creará una carpeta llamada `dist`. El contenido de esta carpeta es lo que
-   subirás a tu hosting.
+3. EJECUTAR EL SERVIDOR COMPLETO
+   Este comando inicia el Backend (puerto 3001) y sirve el Frontend compilado.
+   ES LA FORMA CORRECTA DE USAR LA APP PARA ENVÍOS REALES.
+   
+   $ npm run server
+
+4. Acceder a la Aplicación
+   Abre en tu navegador: http://localhost:3001
 
 --------------------------------------------------------------------------------
-FASE 2: DESPLIEGUE DEL FRONTEND (cPanel - Public HTML)
+MODO DESARROLLO (Para programadores)
 --------------------------------------------------------------------------------
+Si quieres editar el código y ver cambios en tiempo real:
 
-1. Sube los archivos:
-   - Ve al "Administrador de Archivos" en cPanel.
-   - Navega a la carpeta pública (`public_html` o la carpeta de tu subdominio).
-   - Sube TODO el contenido que está DENTRO de la carpeta `dist` local.
-     (No subas la carpeta `dist`, sino los archivos index.html, assets/, etc.).
+Terminal 1 (Backend):
+$ npm run server
 
-2. Configura el Enrutamiento (.htaccess):
-   Como es una Single Page Application (SPA), necesitas redirigir todo al index.html.
-   - Crea un archivo llamado `.htaccess` en la misma carpeta.
-   - Pega el siguiente código:
+Terminal 2 (Frontend):
+$ npm run dev
 
-   <IfModule mod_rewrite.c>
-     RewriteEngine On
-     RewriteBase /
-     RewriteRule ^index\.html$ - [L]
-     RewriteCond %{REQUEST_FILENAME} !-f
-     RewriteCond %{REQUEST_FILENAME} !-d
-     RewriteRule . /index.html [L]
-   </IfModule>
+Accede a http://localhost:3000 (Vite hará proxy de las peticiones /api al 3001).
 
 --------------------------------------------------------------------------------
-FASE 3: BASE DE DATOS
+SOLUCIÓN DE PROBLEMAS
 --------------------------------------------------------------------------------
 
-1. Crear Base de Datos:
-   - En cPanel > "Bases de datos MySQL".
-   - Crea una nueva base de datos (ej. `miusuario_leadmaster`).
-   - Crea un usuario y asígnale contraseña.
-   - Añade el usuario a la base de datos con "Todos los Privilegios".
+A) "Backend desconectado" al intentar enviar correos:
+   Significa que no has ejecutado el paso 3 (`npm run server`). La interfaz gráfica
+   está cargada pero no hay nadie "escuchando" para enviar los emails.
 
-2. Importar Estructura:
-   - Ve a phpMyAdmin.
-   - Selecciona tu base de datos.
-   - Importa el archivo `.sql` que genera la aplicación (descárgalo desde la sección
-     "Configuración" de la app funcionando localmente o usa el esquema provisto).
+B) Error de SMTP / Credenciales:
+   Ve a la sección "Configuración" en la app.
+   Asegúrate de poner el Host (ej. smtp.gmail.com), Puerto (587), Usuario y Password.
+   
+   Si usas Gmail, DEBES usar una "Contraseña de Aplicación", no tu contraseña normal.
+   (Gestionar cuenta Google > Seguridad > Verificación en 2 pasos > Contraseñas de aplicaciones).
 
---------------------------------------------------------------------------------
-FASE 4: DESPLIEGUE DEL BACKEND (cPanel - Setup Node.js App)
---------------------------------------------------------------------------------
-
-El backend (Worker) necesita correr continuamente para enviar correos.
-
-1. Crear la App Node.js:
-   - En cPanel busca "Setup Node.js App".
-   - Click en "Create Application".
-   - Node.js Version: Selecciona la recomendada (v18, v20).
-   - Application Mode: Production.
-   - Application root: `lead-backend` (se creará esta carpeta fuera de public_html).
-   - Application URL: `api` (o un subdominio si prefieres, ej. api.midominio.com).
-   - Application startup file: `app.js`.
-   - Click en "CREATE".
-
-2. Subir Archivos del Backend:
-   - Entra al Administrador de Archivos y busca la carpeta `lead-backend` creada.
-   - Sube los siguientes archivos (Generados por el Kit de descarga de la App):
-     a) `package.json` (Asegúrate que tenga las dependencias: nodemailer, mysql2, dotenv).
-     b) El script del worker (renómbralo a `app.js`).
-     c) `.env` (con tus credenciales de base de datos del hosting y SMTP).
-
-   *NOTA: Si descargas el KIT desde la app, extrae los archivos y sube el .js renombrado.*
-
-3. Instalar Dependencias:
-   - Vuelve a la pantalla de "Setup Node.js App" en cPanel.
-   - Si subiste el package.json correctamente, verás un botón "Run NPM Install". Púlsalo.
-   - Si no aparece, entra por SSH al servidor, ve a la carpeta y ejecuta `npm install`.
-
-4. Iniciar el Backend:
-   - En la pantalla de Node.js App, haz click en "Restart".
-
---------------------------------------------------------------------------------
-RESUMEN DE CONFIGURACIÓN (.env del Backend)
---------------------------------------------------------------------------------
-El archivo .env en tu carpeta `lead-backend` debe lucir así:
-
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=tu@gmail.com
-SMTP_PASS=tu_app_password
-SENDER_EMAIL=tu@gmail.com
-
-DB_HOST=localhost (Generalmente es localhost en cPanel)
-DB_USER=miusuario_dbuser
-DB_PASS=password_segura
-DB_NAME=miusuario_leadmaster
-
---------------------------------------------------------------------------------
-SOLUCIÓN DE PROBLEMAS COMUNES
---------------------------------------------------------------------------------
-
-1. Error 404 al recargar la página:
-   - Asegúrate de haber creado el archivo `.htaccess` correctamente en `public_html`.
-
-2. El Backend no envía correos:
-   - Revisa el archivo de logs. En cPanel, suele crearse un `stderr.log` en la carpeta `lead-backend`.
-   - Verifica que el puerto SMTP 587 esté abierto (algunos hostings bloquean puertos de correo, consulta a soporte).
-
-3. "App Not Found" o Error 500/503 en el Backend:
-   - Asegúrate que el archivo de inicio se llame `app.js` y coincida con la configuración en "Setup Node.js App".
-   - Revisa que hayas pulsado "Run NPM Install".
+C) El scraping se cuelga:
+   Asegúrate de tener una API KEY de Gemini válida en tu archivo .env o en el código.
 
 ================================================================================
-Generated by Lead Master AI Architect v3.0
+Generated by Lead Master AI Architect v3.1
 ================================================================================

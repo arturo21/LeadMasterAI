@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { enrichProfiles } from './services/geminiService';
 import { MechanicalService } from './services/mechanicalService';
@@ -358,6 +357,17 @@ const App: React.FC = () => {
                             onChange={e => setParams({...params, country: e.target.value})}
                             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
                           />
+                        </div>
+
+                        <div className="relative animate-in fade-in slide-in-from-top-2 duration-300">
+                           <Music className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                           <input 
+                             type="text" 
+                             placeholder="Estilo Musical (Opcional)"
+                             value={params.musicStyle}
+                             onChange={e => setParams({...params, musicStyle: e.target.value})}
+                             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
+                           />
                         </div>
                       </>
                     ) : (

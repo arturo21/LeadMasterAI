@@ -1,4 +1,3 @@
-
 import { RawProfile, SearchParams } from "../types";
 import { GoogleGenAI, Type } from "@google/genai";
 
@@ -12,6 +11,39 @@ const getApiKey = (): string => {
   return key;
 };
 
+// Helper function to handle potential JSON truncation or Markdown formatting
+const parseRobustJSON = (text: string | undefined): any[] => {
+  if (!text) return [];
+  
+  // 1. Remove Markdown code blocks
+  let clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  
+  try {
+    // Attempt standard parse
+    return JSON.parse(clean);
+  } catch (error) {
+    // 2. If parse fails (likely truncation), attempt to recover the valid part of the array
+    console.warn("JSON Parse failed (likely truncated). Attempting repair...", error);
+    
+    if (clean.startsWith("[") && !clean.endsWith("]")) {
+       // Find the last successfully closed object brace
+       const lastClosingBrace = clean.lastIndexOf("}");
+       if (lastClosingBrace !== -1) {
+          // Reconstruct valid array
+          const salvaged = clean.substring(0, lastClosingBrace + 1) + "]";
+          try {
+             return JSON.parse(salvaged);
+          } catch (repairError) {
+             console.error("JSON Repair failed:", repairError);
+          }
+       }
+    }
+    
+    // Return empty array if unrecoverable
+    return [];
+  }
+};
+
 export class MechanicalService {
   
   static async scrapeRawProfiles(params: SearchParams): Promise<RawProfile[]> {
@@ -19,7 +51,7 @@ export class MechanicalService {
     
     // We use a lighter/faster call to simulate the "Scraping" phase.
     const ai = new GoogleGenAI({ apiKey: getApiKey() });
-    const model = "gemini-3-flash-preview"; // Faster model for "mechanical" simulation
+    const model = "gemini-3-flash-preview"; 
 
     const prompt = `
       ACT AS A NODE.JS WEB SCRAPER (Puppeteer).
@@ -27,6 +59,7 @@ export class MechanicalService {
       Generate ${params.resultsCount} JSON objects representing RAW Instagram profiles found for:
       Niche: ${params.niche}
       Country: ${params.country}
+      Musical Style: ${params.musicStyle || "Any"}
       Nature: ${params.contactNature}
       
       Output ONLY: username, fullName, bio, followerCount, externalUrl.
@@ -42,6 +75,7 @@ export class MechanicalService {
         contents: prompt,
         config: {
           responseMimeType: "application/json",
+          maxOutputTokens: 8192, // Increased limit to prevent truncation
           responseSchema: {
             type: Type.ARRAY,
             items: {
@@ -58,7 +92,8 @@ export class MechanicalService {
         }
       });
 
-      const rawData = JSON.parse(response.text || "[]");
+      // Use robust parser
+      const rawData = parseRobustJSON(response.text);
 
       // --- MECHANICAL PROCESSING (Node.js Logic Simulation) ---
       // Simulating: const emailRegex = /.../; const matches = bio.match(emailRegex);
@@ -82,7 +117,7 @@ export class MechanicalService {
 
     } catch (error) {
       console.error("Mechanical Scrape Failed:", error);
-      throw new Error("Error de conexión con el Worker Node.js.");
+      throw new Error("Error de conexión con el Worker Node.js (Posible timeout o límite de tokens).");
     }
   }
 }
