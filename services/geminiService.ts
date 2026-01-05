@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { Profile, LeadCategory, RawProfile, Campaign } from "../types";
+import { Profile, LeadCategory, RawProfile, Campaign, MediaCategory } from "../types";
 
 const getApiKey = (): string => {
   const key = process.env.API_KEY;
@@ -113,6 +113,93 @@ export const enrichProfiles = async (
         category: LeadCategory.Unclassified,
         relevanceScore: 0
     }));
+  }
+};
+
+// --- MEDIA TALENT ENRICHMENT (Context-Aware) ---
+export const enrichMediaTalent = async (
+  rawProfiles: RawProfile[],
+  musicGenreContext?: string // New Parameter for reasoning
+): Promise<Profile[]> => {
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+
+  if (rawProfiles.length === 0) return [];
+
+  const genreInstruction = musicGenreContext 
+    ? `CRITICAL: Analyze if the profile has affinity with the musical genre "${musicGenreContext}". 
+       If they are a "Rock" DJ and the target is "Reggaeton", lower the score significantly. 
+       If they explicitly mention the genre or related artists, boost the score to 90+.` 
+    : "Evaluate general professional relevance.";
+
+  const prompt = `
+    You are a TALENT SCOUT AI for Radio & TV.
+    
+    Analyze these ${rawProfiles.length} profiles.
+    
+    TASKS:
+    1. CATEGORIZE exact talent type:
+       ["Radio Musical", "Radio Informativa", "TV Entretenimiento", "TV Noticias", "Voice-Over Publicitario", "Podcast Host", "Fan / Parodia (Descartar)"]
+       
+    2. DETECT "FAN ACCOUNTS": 
+       If the bio says "Fan page", "Apoyo a...", "Fan club", or if they have very few followers compared to a typical celebrity (<500), mark as "Fan / Parodia (Descartar)" and set relevanceScore to 0.
+       
+    3. EXTRACT MEDIA OUTLET:
+       Identify the station or channel they work for (e.g. "Cadena 100", "Telecinco", "BBC"). If not found, use "Freelance".
+    
+    4. RELEVANCE SCORE (0-100):
+       ${genreInstruction}
+       - High (80-100): Professional, Contact info present, Matches Genre Context.
+       - Medium (50-79): Professional but vague.
+       - Low (0-20): Fans, inactive, or genre mismatch.
+
+    INPUT DATA:
+    ${JSON.stringify(rawProfiles.map(p => ({ username: p.username, bio: p.bio, followers: p.followerCount })))}
+    
+    OUTPUT JSON ARRAY.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL_NAME,
+      contents: prompt,
+      config: {
+        temperature: 0.2, // Slightly creative for genre matching
+        responseMimeType: "application/json",
+        maxOutputTokens: 8192,
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              username: { type: Type.STRING },
+              category: { type: Type.STRING },
+              mediaOutlet: { type: Type.STRING },
+              relevanceScore: { type: Type.INTEGER }
+            }
+          }
+        }
+      }
+    });
+
+    const jsonStr = cleanJsonOutput(response.text);
+    let insights = [];
+    try { insights = JSON.parse(jsonStr); } catch (e) { console.error(e); }
+
+    return rawProfiles.map(raw => {
+      const insight = insights.find((c: any) => c.username === raw.username);
+      return {
+        ...raw,
+        id: crypto.randomUUID(),
+        scrapedAt: new Date().toISOString(),
+        category: insight?.category || MediaCategory.FanAccount,
+        mediaOutlet: insight?.mediaOutlet || "Unknown",
+        relevanceScore: insight?.relevanceScore || 20
+      };
+    });
+
+  } catch (error) {
+    console.error("Media Talent Enrichment Failed:", error);
+    return rawProfiles.map(raw => ({ ...raw, id: crypto.randomUUID(), scrapedAt: new Date().toISOString(), category: "Error", relevanceScore: 0 }));
   }
 };
 

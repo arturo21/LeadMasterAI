@@ -1,141 +1,101 @@
 ================================================================================
-INSTA-PROSPECT HYBRID ENGINE v3.1 - GUÍA DE EJECUCIÓN (ENTORNO REAL)
+INSTA-PROSPECT HYBRID ENGINE v3.1 - GUÍA DE DESPLIEGUE EN SHARED HOSTING
 ================================================================================
 
-IMPORTANTE: 
-Para enviar correos electrónicos REALES, necesitas ejecutar tanto el frontend (Vite)
-como el backend (Node.js) simultáneamente. El backend es el encargado de comunicar
-con Mailgun/SMTP.
+Esta guía está diseñada para desplegar la aplicación en proveedores de Shared Hosting
+que soporten Node.js (ej: cPanel con "Setup Node.js App", Hostinger, Namecheap, etc.).
 
 --------------------------------------------------------------------------------
-1. INSTRUCCIONES DE INICIO RÁPIDO
+FASE 1: PREPARACIÓN LOCAL (En tu PC)
 --------------------------------------------------------------------------------
 
-A. Instalar dependencias (Solo la primera vez)
-   Abre una terminal en la carpeta del proyecto y ejecuta:
+1. Configuración de Entorno:
+   Asegúrate de tener un archivo `.env` en la raíz del proyecto con tu clave API:
+   
+   API_KEY=tu_clave_gemini_aqui
+
+2. Construcción (Build):
+   Necesitamos compilar el Frontend de React en archivos estáticos.
+   Abre tu terminal en la carpeta del proyecto y ejecuta:
+   
    $ npm install
-
-B. Compilar el Frontend
-   Antes de correr el modo producción, necesitamos construir la app de React:
    $ npm run build
 
-C. EJECUTAR EL SERVIDOR COMPLETO
-   Este comando inicia el Backend (puerto 3001) y sirve el Frontend compilado.
-   ES LA FORMA CORRECTA DE USAR LA APP PARA ENVÍOS REALES.
+   Esto creará una carpeta llamada `dist`. Esta carpeta contiene la interfaz visual
+   que el servidor Node.js entregará al navegador.
+
+3. Preparar Archivos para Subir:
+   Crea un archivo ZIP que contenga SOLO los siguientes archivos/carpetas:
    
-   $ npm run server
+   - dist/          (La carpeta completa que acabas de generar)
+   - services/      (Código fuente necesario para el backend)
+   - types.ts       (Definiciones de tipos)
+   - package.json   (Lista de dependencias)
+   - server.js      (El archivo principal del servidor)
+   - worker.js      (Opcional, si usarás el worker en segundo plano)
+   - .env           (Tu archivo de variables de entorno)
 
-D. Acceder a la Aplicación
-   Abre en tu navegador: http://localhost:3001
-
---------------------------------------------------------------------------------
-2. SOLUCIÓN DE PROBLEMAS COMUNES
---------------------------------------------------------------------------------
-
-- "Backend desconectado": Asegúrate de haber ejecutado `npm run server`.
-- La tabla de Leads no carga: Si la IA tarda, el sistema hará hasta 3 reintentos.
-  Espera unos segundos.
-- Error SMTP: Verifica que tu puerto sea 587 (TLS) o 465 (SSL).
+   NO incluyas `node_modules` en el ZIP. Lo instalaremos en el servidor.
 
 --------------------------------------------------------------------------------
-ANEXO A: MÓDULO DE CONFIGURACIÓN (SQL SCHEMA)
+FASE 2: CONFIGURACIÓN EN CPANEL (Shared Hosting)
 --------------------------------------------------------------------------------
-Ejecuta esto en tu base de datos MySQL/MariaDB para preparar el entorno de producción:
 
-CREATE DATABASE IF NOT EXISTS lead_master_db;
-USE lead_master_db;
+1. Accede a cPanel y busca la opción "Setup Node.js App" (o "Node.js Selector").
 
-CREATE TABLE IF NOT EXISTS leads (
-    email VARCHAR(255) PRIMARY KEY,
-    name VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'PENDING', -- PENDING, SENT, ERROR
-    attempts INT DEFAULT 0,
-    last_error TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
+2. Crear Aplicación:
+   - Node.js Version: Selecciona la versión 18.x o 20.x (Recomendado 20).
+   - Application Mode: "Production".
+   - Application Root: Escribe la ruta, ej: `lead-master`.
+   - Application URL: Selecciona tu dominio/subdominio.
+   - Application Startup File: Escribe `server.js`.
+   - Clic en "CREATE".
 
-CREATE TABLE IF NOT EXISTS campaign_logs (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(255),
-    action VARCHAR(50),
-    details TEXT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (email) REFERENCES leads(email)
-);
+3. Subir Archivos:
+   - Entra al "File Manager" de cPanel.
+   - Navega a la carpeta que se creó (ej: `/home/usuario/lead-master`).
+   - Sube tu archivo ZIP y extráelo ahí.
+   - Asegúrate de que `server.js` y la carpeta `dist` estén en la raíz de esa carpeta.
+
+4. Instalar Dependencias:
+   - Vuelve a la pantalla de "Setup Node.js App".
+   - Deberías ver un botón que dice "Run NPM Install". Haz clic en él.
+   - Esto instalará las librerías necesarias en el servidor.
+   
+   *NOTA SOBRE PUPPETEER:* 
+   En Shared Hosting, Puppeteer intenta descargar Chromium. A veces falla por espacio.
+   Si falla, es posible que necesites crear un archivo `.npmrc` en la raíz con:
+   `puppeteer_skip_chromium_download=true`
+   Y usar una ruta a un Chrome instalado en el sistema (si el hosting lo permite),
+   pero la configuración actual intenta descargarlo localmente.
+
+5. Reiniciar App:
+   - Una vez instaladas las dependencias, haz clic en "RESTART" en la configuración de Node.js.
 
 --------------------------------------------------------------------------------
-ANEXO B: SCRIPT COMPLETO DE ENVÍO DE CORREOS (WORKER.JS)
+FASE 3: VERIFICACIÓN Y SOLUCIÓN DE PROBLEMAS
 --------------------------------------------------------------------------------
-Usa este script si deseas ejecutar el worker en un servidor dedicado independiente.
 
-import mysql from 'mysql2/promise';
-import nodemailer from 'nodemailer';
+1. Accede a tu URL. Deberías ver la aplicación cargando.
+   Si ves una pantalla en blanco:
+   - Abre la consola del navegador (F12).
+   - Si hay errores 404 en archivos .js/.css, verifica que `vite.config.ts` tenga `base: './'`.
 
-// CONFIGURACIÓN
-const SMTP_CONFIG = {
-    host: 'smtp.tuservidor.com',
-    port: 587,
-    auth: { user: 'tu_usuario', pass: 'tu_password' }
-};
+2. Si el Scraper falla (Error 500 al buscar):
+   - Puppeteer requiere librerías del sistema operativo (libX11, etc.) que a veces
+     NO están instaladas en Shared Hosting barato.
+   - Revisa el archivo `stderr.log` en la carpeta de tu aplicación en el File Manager.
+   - Si el error menciona "Missing libraries", contacta a soporte de tu hosting
+     o considera migrar a un VPS (DigitalOcean, Vultr, Railway) donde Puppeteer
+     corre sin restricciones.
 
-const DB_CONFIG = {
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'lead_master_db'
-};
-
-async function runWorker() {
-    console.log("[WORKER] Buscando correos pendientes...");
-    let connection;
-
-    try {
-        connection = await mysql.createConnection(DB_CONFIG);
-        const transporter = nodemailer.createTransport(SMTP_CONFIG);
-        
-        // Buscar 10 pendientes
-        const [rows] = await connection.execute(
-            'SELECT * FROM leads WHERE status = "PENDING" LIMIT 10'
-        );
-
-        if (rows.length === 0) return;
-
-        for (const lead of rows) {
-            try {
-                // Enviar
-                await transporter.sendMail({
-                    from: 'tu@email.com',
-                    to: lead.email,
-                    subject: 'Asunto...',
-                    html: '<p>Contenido...</p>'
-                });
-
-                // Marcar como ENVIADO
-                await connection.execute(
-                    'UPDATE leads SET status = "SENT" WHERE email = ?', [lead.email]
-                );
-                console.log(`[OK] Enviado a ${lead.email}`);
-
-            } catch (err) {
-                // Marcar ERROR
-                await connection.execute(
-                    'UPDATE leads SET status = "ERROR", last_error = ? WHERE email = ?',
-                    [err.message, lead.email]
-                );
-                console.error(`[ERROR] ${lead.email}: ${err.message}`);
-            }
-        }
-    } catch (e) {
-        console.error("Error General:", e);
-    } finally {
-        if (connection) await connection.end();
-    }
-}
-
-// Ejecutar bucle
-setInterval(runWorker, 5000); // Cada 5 segundos
-console.log("Worker iniciado.");
+3. Base de Datos (Opcional):
+   - Si usas la funcionalidad de MySQL, crea la base de datos en cPanel -> "MySQL Databases".
+   - Actualiza tu archivo `.env` en el File Manager con las credenciales:
+     DB_HOST=localhost
+     DB_USER=tu_usuario_cpanel
+     DB_NAME=tu_base_datos
+     DB_PASS=tu_password
 
 ================================================================================
 Generated by Lead Master AI Architect v3.1

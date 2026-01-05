@@ -204,7 +204,7 @@ PARA PRODUCCIÓN (Con PM2):
                         <button
                             type="button"
                             onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-2.5 text-slate-500 hover:text-cyan-400 transition-colors"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors"
                             tabIndex={-1}
                         >
                             {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -300,7 +300,7 @@ PARA PRODUCCIÓN (Con PM2):
                         <button
                             type="button"
                             onClick={() => setShowDbPassword(!showDbPassword)}
-                            className="absolute right-3 top-2.5 text-slate-500 hover:text-cyan-400 transition-colors"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-cyan-400 transition-colors"
                             tabIndex={-1}
                         >
                             {showDbPassword ? <EyeOff size={16} /> : <Eye size={16} />}

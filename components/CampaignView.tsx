@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MailgunConfig, Profile, LeadCategory } from '../types';
 import { MailgunService } from '../services/mailgunService';
+import { MechanicalService } from '../services/mechanicalService';
 import { generateEmailTemplate } from '../services/geminiService';
 import { PersistenceService } from '../services/persistenceService';
-import { Send, Users, Wand2, UploadCloud, AlertCircle, Loader2, FileUp, Trash2, AtSign, Calendar, Megaphone, Radio, FileText, PenTool, Save, Beaker, CheckCircle2, XCircle, Info, ServerCrash } from 'lucide-react';
+import { ImportService } from '../services/importService';
+import { Send, Users, Wand2, UploadCloud, AlertCircle, Loader2, FileUp, Trash2, AtSign, Calendar, Megaphone, Radio, FileText, PenTool, Save, Beaker, CheckCircle2, XCircle, Info, ServerCrash, ShieldCheck } from 'lucide-react';
 
 interface CampaignViewProps {
   recipients: Profile[];
@@ -21,6 +23,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
   const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generatingTemplate, setGeneratingTemplate] = useState(false);
+  const [validating, setValidating] = useState(false); // Mechanical validation state
   const [logs, setLogs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'editor' | 'preview'>('editor');
   
@@ -55,6 +58,35 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
   const validRecipients = recipients.filter(p => p.email && p.email.includes('@'));
 
   const addLog = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
+
+  const handleMechanicalValidation = async () => {
+     if (validRecipients.length === 0) return;
+     
+     setValidating(true);
+     addLog("⚙️ Iniciando Validación Mecánica de Emails (Node.js DNS Check)...");
+     
+     const emailsToCheck = validRecipients.map(r => r.email!);
+     try {
+       const results = await MechanicalService.validateEmailBatch(emailsToCheck);
+       
+       // Filter out invalid emails
+       const invalidEmails = new Set(results.filter(r => !r.isValid).map(r => r.email));
+       
+       if (invalidEmails.size > 0) {
+          const newRecipients = recipients.filter(r => !r.email || !invalidEmails.has(r.email));
+          onUpdateRecipients(newRecipients);
+          addLog(`⚠️ ${invalidEmails.size} correos inválidos eliminados de la lista.`);
+          setNotification({ message: `Limpieza completada: ${invalidEmails.size} inválidos eliminados.`, type: 'success' });
+       } else {
+          addLog("✅ Todos los correos tienen registros MX válidos.");
+          setNotification({ message: "Validación Exitosa: Todos los correos son válidos.", type: 'success' });
+       }
+     } catch (e) {
+        addLog("Error en validación mecánica.");
+     } finally {
+        setValidating(false);
+     }
+  };
 
   const handleGenerateTemplate = async () => {
     if (!subject || subject.length < 5) {
@@ -119,10 +151,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
     addLog(`🧪 Enviando prueba a ${testEmail} (REAL)...`);
 
     try {
-      // Create a temporary config object merging the global config with the specific sender email
       const campaignConfig = { ...config, fromEmail: senderEmail };
-      
-      // Personalize the template for the test
       let testHtml = htmlContent
         .replace(/{{username}}/g, "UsuarioPrueba")
         .replace(/{{fullname}}/g, "Nombre Apellido Test");
@@ -171,7 +200,6 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
     setNotification(null); // Clear previous
     addLog("🔒 Verificando estado del servidor...");
 
-    // Check backend first
     const isBackendOnline = await MailgunService.verifyBackendStatus();
     if (!isBackendOnline) {
        const msg = "NO SE PUEDE ENVIAR: El servidor Backend no está corriendo. Ejecuta 'npm run server' en tu terminal.";
@@ -201,8 +229,6 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
       const campaignConfig = { ...config, fromEmail: senderEmail };
 
       for (const profile of validRecipients) {
-        // En un entorno real idealmente usaríamos una cola en el backend,
-        // pero para este modo híbrido, iteramos con cuidado.
         const trackingPixel = `<img src="https://api.leadmaster.ai/track/open/${campaignRecord.id}/${profile.id}" width="1" height="1" style="display:none;" alt="" />`;
         
         let finalHtml = htmlContent
@@ -232,7 +258,6 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
       addLog(`=== FIN DE CAMPAÑA ===`);
       addLog(`Entregados: ${successCount} | Fallidos: ${failCount}`);
       
-      // Final Notification logic
       if (failCount === 0) {
         setNotification({ 
             message: `¡Campaña finalizada! ${successCount} correos entregados exitosamente.`, 
@@ -241,7 +266,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
       } else if (successCount > 0) {
         setNotification({ 
             message: `Campaña completada. ${successCount} enviados, ${failCount} fallidos.`, 
-            type: 'error' // Usamos estilo 'error' (rojo/ambar) para llamar la atención sobre los fallos
+            type: 'error'
         });
       } else {
          setNotification({ 
@@ -259,139 +284,26 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
     }
   };
 
-  // ... (Rest of imports and functions like processFile remain same)
-
-  // Drag & drop logic and handlers remain the same...
-  // (We are focusing on the send logic changes above)
-  const processFile = (file: File) => {
-    // ... same as before
-    const isCSV = file.name.endsWith('.csv');
-    const isDOC = file.name.endsWith('.doc'); // HTML-based Word files from ExportService
-
-    if (!isCSV && !isDOC) {
-      addLog("ERROR: Formato no soportado. Usa .CSV o los archivos .DOC generados por la app.");
-      setNotification({ message: "Formato de archivo no soportado.", type: 'error' });
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (!text) return;
-
-      const newProfiles: Profile[] = [];
-
-      if (isCSV) {
-        // --- CSV PARSING STRATEGY ---
-        const lines = text.split('\n');
-        if (lines.length < 2) return;
-
-        const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-        
-        // Detección Inteligente de Columnas
-        let usernameIdx = headers.findIndex(h => h.match(/usuario|user|username/i));
-        let nameIdx = headers.findIndex(h => h.match(/nombre|name|fullname/i));
-        let emailIdx = headers.findIndex(h => h.match(/email|correo|mail/i));
-
-        // Fallback por contenido si fallan headers
-        if (emailIdx === -1) {
-           addLog("⚠️ Headers CSV confusos. Escaneando contenido...");
-           const sampleRows = lines.slice(1, 6);
-           const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-           const colScores = new Array(headers.length).fill(0);
-           
-           sampleRows.forEach(rowStr => {
-              const cols = rowStr.split(',');
-              cols.forEach((col, idx) => { if (emailRegex.test(col)) colScores[idx]++; });
-           });
-
-           const bestCol = colScores.findIndex(score => score > 0);
-           if (bestCol !== -1) emailIdx = bestCol;
-        }
-
-        if (emailIdx === -1) {
-          addLog("ERROR: No se encontró columna de Email en el CSV.");
-          setNotification({ message: "No se encontró columna de Email en el CSV.", type: 'error' });
-          return;
-        }
-
-        for (let i = 1; i < lines.length; i++) {
-          const row = lines[i].split(','); 
-          if (row.length < headers.length && row.length < emailIdx) continue;
-
-          const rawEmail = row[emailIdx]?.trim();
-          const email = rawEmail ? rawEmail.replace(/"/g, '') : '';
-          
-          if (email && email.includes('@')) {
-             newProfiles.push({
-               id: crypto.randomUUID(),
-               username: usernameIdx !== -1 ? row[usernameIdx]?.trim() || 'ImportedUser' : 'ImportedUser',
-               fullName: nameIdx !== -1 ? row[nameIdx]?.replace(/"/g, '').trim() || '' : '',
-               email: email,
-               bio: 'Importado vía CSV',
-               externalUrl: '',
-               followerCount: 0,
-               phone: null,
-               category: LeadCategory.Unclassified,
-               relevanceScore: 50,
-               scrapedAt: new Date().toISOString(),
-               isScraped: true
-             });
-          }
-        }
-      } else if (isDOC) {
-        // --- DOC/HTML PARSING STRATEGY ---
-        addLog("📄 Detectado archivo Word (HTML Table). Procesando...");
-        try {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(text, 'text/html');
-          const rows = Array.from(doc.querySelectorAll('tr'));
-          
-          rows.forEach((row, index) => {
-            if (index === 0) return; // Skip Header row
-            const cells = row.querySelectorAll('td');
-            if (cells.length < 5) return;
-
-            // Limpieza específica para el formato HTML generado
-            const rawEmail = cells[4]?.textContent?.trim() || '';
-            
-            if (rawEmail && rawEmail.includes('@') && rawEmail !== '-') {
-              const rawUsername = cells[0]?.textContent?.trim() || 'Usuario';
-              const cleanUsername = rawUsername.replace('@', ''); // Quitar arroba visual
-              
-              newProfiles.push({
-                id: crypto.randomUUID(),
-                username: cleanUsername,
-                fullName: cells[1]?.textContent?.trim() || '',
-                email: rawEmail,
-                bio: cells[6]?.textContent?.trim() || 'Importado vía DOC',
-                externalUrl: cells[5]?.textContent?.trim() || '',
-                followerCount: parseInt(cells[3]?.textContent?.replace(/,/g, '') || '0'),
-                phone: null,
-                category: LeadCategory.Unclassified,
-                relevanceScore: 50,
-                scrapedAt: new Date().toISOString(),
-                isScraped: true
-              });
-            }
-          });
-        } catch (e) {
-          addLog("ERROR Parseando DOC: El archivo no tiene el formato esperado.");
-          setNotification({ message: "Archivo DOC corrupto o formato inválido.", type: 'error' });
-          return;
-        }
-      }
-
-      if (newProfiles.length > 0) {
-        onUpdateRecipients([...recipients, ...newProfiles]);
-        addLog(`📥 Importados ${newProfiles.length} contactos desde ${file.name}.`);
-        setNotification({ message: `Importados ${newProfiles.length} contactos correctamente.`, type: 'success' });
+  const processFile = async (file: File) => {
+    addLog(`📂 Procesando archivo: ${file.name}...`);
+    try {
+      const imported = await ImportService.parseFile(file);
+      
+      // Filter valid emails
+      const validImported = imported.filter(p => p.email && p.email.includes('@'));
+      
+      if (validImported.length > 0) {
+        onUpdateRecipients([...recipients, ...validImported]);
+        addLog(`📥 Importados ${validImported.length} contactos válidos.`);
+        setNotification({ message: `Importados ${validImported.length} contactos correctamente.`, type: 'success' });
       } else {
         addLog("No se encontraron emails válidos en el archivo.");
         setNotification({ message: "No se encontraron contactos válidos.", type: 'error' });
       }
-    };
-    reader.readAsText(file);
+    } catch (e: any) {
+      addLog(`ERROR: ${e.message}`);
+      setNotification({ message: e.message, type: 'error' });
+    }
   };
 
   const onDragOver = (e: React.DragEvent) => {
@@ -450,7 +362,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
             <div>
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Remitente (De)</label>
               <div className="relative">
-                <AtSign className="absolute left-3 top-2.5 text-slate-500" size={14} />
+                <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
                 <input 
                   type="email" 
                   value={senderEmail}
@@ -464,7 +376,7 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
             <div>
               <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Categoría Campaña</label>
               <div className="relative">
-                 <div className="absolute left-3 top-2.5 pointer-events-none">
+                 <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
                     {campaignCategory === 'Evento en vivo' && <Calendar size={14} className="text-cyan-500" />}
                     {campaignCategory === 'Evento online' && <Radio size={14} className="text-purple-500" />}
                     {campaignCategory === 'Nota de prensa' && <FileText size={14} className="text-emerald-500" />}
@@ -601,9 +513,6 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
                   Enviar Prueba
                 </button>
              </div>
-             <p className="text-[10px] text-slate-500 mt-1 pl-1">
-                Se enviará una versión con datos ficticios ({`{{username}}`} &rarr; UsuarioPrueba) para verificar estilos.
-             </p>
           </div>
 
         </div>
@@ -679,6 +588,22 @@ export const CampaignView: React.FC<CampaignViewProps> = ({ recipients, onUpdate
              <FileUp className="mx-auto text-slate-500 mb-2" size={24} />
              <p className="text-xs text-slate-300 font-medium">Arrastra CSV o Reporte DOC aquí</p>
              <p className="text-[10px] text-slate-500 mt-1">Soporta .CSV y .DOC (Generados por Lead Master)</p>
+           </div>
+           
+           {/* MECHANICAL VALIDATION BUTTON */}
+           <div className="mt-4 pt-4 border-t border-slate-800">
+               <button
+                 onClick={handleMechanicalValidation}
+                 disabled={validating || validRecipients.length === 0}
+                 className="w-full flex items-center justify-center gap-2 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white rounded-md transition-colors text-xs font-mono"
+                 title="Verifica MX/DNS sin usar Tokens IA"
+               >
+                 {validating ? <Loader2 className="animate-spin" size={12} /> : <ShieldCheck size={12} />}
+                 {validating ? 'VALIDANDO EN BACKEND...' : 'VERIFICAR EMAILS (MECÁNICO/NODE.JS)'}
+               </button>
+               <p className="text-[9px] text-slate-600 text-center mt-1">
+                 Usa el backend Node.js para comprobar registros MX. No consume cuota de IA.
+               </p>
            </div>
         </div>
 

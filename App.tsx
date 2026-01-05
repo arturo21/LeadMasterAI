@@ -2,22 +2,22 @@ import React, { useState, useCallback, useRef, useEffect, Suspense } from 'react
 import { enrichProfiles } from './services/geminiService';
 import { MechanicalService } from './services/mechanicalService';
 import { ExportManager } from './services/exportService';
+import { ImportService } from './services/importService';
 import { Profile, SearchParams, AppStatus, LeadCategory, ViewMode, MailgunConfig, RawProfile } from './types';
 // Lazy loaded components for better performance
 const SettingsView = React.lazy(() => import('./components/SettingsView').then(module => ({ default: module.SettingsView })));
 const CampaignView = React.lazy(() => import('./components/CampaignView').then(module => ({ default: module.CampaignView })));
 const AnalyticsDashboard = React.lazy(() => import('./components/AnalyticsDashboard').then(module => ({ default: module.AnalyticsDashboard })));
+const MediaTalentView = React.lazy(() => import('./components/MediaTalentView').then(module => ({ default: module.MediaTalentView })));
 
 import { 
   Search, 
-  Download, 
   Copy, 
   FileSpreadsheet, 
   FileText, 
   Activity, 
   Users, 
   Filter, 
-  CheckCircle2, 
   AlertCircle,
   Play,
   Terminal,
@@ -32,7 +32,9 @@ import {
   ArrowRight,
   BarChart,
   Bot,
-  Zap
+  Zap,
+  Mic2,
+  UploadCloud
 } from 'lucide-react';
 
 const INITIAL_PARAMS: SearchParams = {
@@ -71,6 +73,7 @@ const LoadingView = () => (
 const App: React.FC = () => {
   // Navigation State
   const [currentView, setCurrentView] = useState<ViewMode>('scraper');
+  const [visitedViews, setVisitedViews] = useState<Set<ViewMode>>(new Set(['scraper']));
   
   // Scraper State
   const [params, setParams] = useState<SearchParams>(INITIAL_PARAMS);
@@ -86,7 +89,6 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('lead_master_mailgun');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Migrate old configs or use new default
       return { 
           ...INITIAL_MAILGUN_CONFIG, 
           ...parsed,
@@ -98,8 +100,8 @@ const App: React.FC = () => {
     return INITIAL_MAILGUN_CONFIG;
   });
   
-  // Use a ref for auto-scrolling logs
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = useCallback((message: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
@@ -109,25 +111,26 @@ const App: React.FC = () => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Save Mailgun config to localStorage
+  const navigateTo = (view: ViewMode) => {
+    setCurrentView(view);
+    setVisitedViews(prev => new Set(prev).add(view));
+  };
+
   const handleSaveConfig = useCallback((newConfig: MailgunConfig) => {
     setMailgunConfig(newConfig);
     localStorage.setItem('lead_master_mailgun', JSON.stringify(newConfig));
     addLog("Configuración Backend (Node.js) actualizada.");
   }, [addLog]);
 
-  // Transfer leads to campaign
   const handleTransferToCampaign = useCallback(() => {
     const validLeads = profiles.filter(p => p.email);
     setCampaignRecipients(validLeads);
-    setCurrentView('campaign');
+    navigateTo('campaign');
     addLog(`${validLeads.length} leads transferidos al módulo de Campaña.`);
   }, [profiles, addLog]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validation
     if (params.mode === 'niche' && (!params.niche || !params.country)) {
         setError("Por favor define un Nicho y un País.");
         return;
@@ -139,28 +142,20 @@ const App: React.FC = () => {
     setLogs([]); 
     addLog(`Inicializando MOTOR HÍBRIDO v3.0 (Node.js)...`);
     
-    // --- PHASE 1: MECHANICAL SCRAPING (Node.js/Puppeteer) ---
     try {
       addLog(">> FASE 1: Scraping Mecánico (Node.js Worker)...");
-      addLog("Conectando con Puppeteer (Headless Chrome)...");
-      
-      // Simulate progress for mechanical phase
       const mechInterval = setInterval(() => {
          setProgress(prev => prev < 45 ? prev + 5 : prev);
       }, 300);
 
-      // Call the mechanical service (Simulating Node.js)
       const rawProfiles: RawProfile[] = await MechanicalService.scrapeRawProfiles(params);
       
       clearInterval(mechInterval);
       setProgress(50);
       addLog(`✅ Scraping completado. ${rawProfiles.length} perfiles brutos extraídos.`);
-      addLog(`Procesados ${rawProfiles.filter(p => p.email).length} emails vía Regex (Node).`);
 
-      // --- PHASE 2: AI ENRICHMENT ---
       setStatus(AppStatus.Classifying);
       addLog(">> FASE 2: Enriquecimiento Generativo (Gemini AI)...");
-      addLog("Analizando biografías para clasificación contextual...");
 
       const enrichedProfiles = await enrichProfiles(rawProfiles, params.contactNature);
       
@@ -169,16 +164,34 @@ const App: React.FC = () => {
       setStatus(AppStatus.Completed);
       addLog("✅ Clasificación IA completada.");
 
-      // Reset progress visual after a moment
-      setTimeout(() => {
-          if (status !== AppStatus.Scraping) setProgress(0);
-      }, 2000);
+      setTimeout(() => { if (status !== AppStatus.Scraping) setProgress(0); }, 2000);
       
     } catch (err: any) {
       setError(err.message || "Ocurrió un error inesperado.");
       addLog(`ERROR CRÍTICO: ${err.message}`);
       setStatus(AppStatus.Error);
       setProgress(0);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    addLog(`📂 Leyendo archivo: ${file.name}...`);
+    setError(null);
+
+    try {
+      const importedProfiles = await ImportService.parseFile(file);
+      setProfiles(importedProfiles);
+      addLog(`✅ Importación exitosa: ${importedProfiles.length} perfiles cargados.`);
+      setStatus(AppStatus.Completed);
+    } catch (err: any) {
+      setError(err.message);
+      addLog(`❌ Error de importación: ${err.message}`);
+    } finally {
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -197,6 +210,10 @@ const App: React.FC = () => {
     irrelevant: profiles.filter(p => p.category === LeadCategory.Irrelevant).length,
   };
 
+  const getDisplayClass = (view: ViewMode) => {
+    return currentView === view ? 'flex-1 flex overflow-hidden w-full h-full' : 'hidden';
+  };
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex font-sans overflow-hidden">
       
@@ -207,18 +224,23 @@ const App: React.FC = () => {
         </div>
 
         <button 
-          onClick={() => setCurrentView('scraper')}
+          onClick={() => navigateTo('scraper')}
           className={`p-3 rounded-xl transition-all group relative ${currentView === 'scraper' ? 'bg-slate-800 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
           title="Scraper & Leads"
         >
            <Database size={24} />
-           <span className="absolute left-16 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-             Extracción
-           </span>
         </button>
 
         <button 
-          onClick={() => setCurrentView('campaign')}
+          onClick={() => navigateTo('media-talent')}
+          className={`p-3 rounded-xl transition-all group relative ${currentView === 'media-talent' ? 'bg-indigo-900 text-blue-300 shadow-lg shadow-blue-900/30' : 'text-slate-500 hover:text-slate-300'}`}
+          title="Media Talent OSINT"
+        >
+           <Mic2 size={24} />
+        </button>
+
+        <button 
+          onClick={() => navigateTo('campaign')}
           className={`p-3 rounded-xl transition-all group relative ${currentView === 'campaign' ? 'bg-slate-800 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
           title="Email Campaign"
         >
@@ -226,72 +248,52 @@ const App: React.FC = () => {
            {campaignRecipients.length > 0 && (
              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border border-slate-950"></span>
            )}
-           <span className="absolute left-16 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-             Campaña Email
-           </span>
         </button>
 
         <button 
-          onClick={() => setCurrentView('analytics')}
+          onClick={() => navigateTo('analytics')}
           className={`p-3 rounded-xl transition-all group relative ${currentView === 'analytics' ? 'bg-slate-800 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
           title="Analytics"
         >
            <BarChart size={24} />
-           <span className="absolute left-16 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-             Analíticas
-           </span>
         </button>
 
         <div className="flex-1" />
 
         <button 
-          onClick={() => setCurrentView('settings')}
+          onClick={() => navigateTo('settings')}
           className={`p-3 rounded-xl transition-all group relative ${currentView === 'settings' ? 'bg-slate-800 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
           title="Settings"
         >
            <Settings size={24} />
-           <span className="absolute left-16 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none">
-             Configuración
-           </span>
         </button>
       </nav>
 
-
-      {/* Main App Logic Switching */}
-      <div className="flex-1 flex overflow-hidden">
-        
+      <div className="flex-1 flex overflow-hidden relative">
         <Suspense fallback={<LoadingView />}>
-            {/* VIEW: SETTINGS */}
-            {currentView === 'settings' && (
-              <div className="flex-1 overflow-auto bg-slate-900 animate-in fade-in zoom-in-95 duration-200">
-                <SettingsView config={mailgunConfig} onSave={handleSaveConfig} />
-              </div>
-            )}
-
-            {/* VIEW: CAMPAIGN */}
-            {currentView === 'campaign' && (
-              <div className="flex-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className={getDisplayClass('media-talent')}>
+              {visitedViews.has('media-talent') && <MediaTalentView />}
+            </div>
+            <div className={getDisplayClass('settings')}>
+              {visitedViews.has('settings') && <SettingsView config={mailgunConfig} onSave={handleSaveConfig} />}
+            </div>
+            <div className={getDisplayClass('campaign')}>
+               {visitedViews.has('campaign') && (
                 <CampaignView 
                     recipients={campaignRecipients} 
                     onUpdateRecipients={setCampaignRecipients}
                     config={mailgunConfig} 
                 />
-              </div>
-            )}
-
-            {/* VIEW: ANALYTICS */}
-            {currentView === 'analytics' && (
-              <div className="flex-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                <AnalyticsDashboard />
-              </div>
-            )}
+               )}
+            </div>
+            <div className={getDisplayClass('analytics')}>
+                {visitedViews.has('analytics') && <AnalyticsDashboard />}
+            </div>
         </Suspense>
 
-        {/* VIEW: SCRAPER (Original View) */}
-        {currentView === 'scraper' && (
-          <div className="flex flex-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            {/* Sidebar / Control Panel */}
-            <aside className="w-80 bg-slate-950 border-r border-slate-800 flex flex-col h-screen z-10 shadow-2xl">
+        {/* VIEW: SCRAPER */}
+        <div className={getDisplayClass('scraper')}>
+            <aside className="w-80 bg-slate-950 border-r border-slate-800 flex flex-col h-full z-10 shadow-2xl">
               <div className="p-6 border-b border-slate-800">
                 <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent flex items-center gap-2">
                   LEAD MASTER AI
@@ -330,65 +332,59 @@ const App: React.FC = () => {
 
                   {/* Target Inputs */}
                   <div className="space-y-3">
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                      <span>Targeting</span>
-                      <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-500">{params.mode === 'niche' ? 'FEED' : 'GRAFO'}</span>
-                    </label>
-                    
                     {params.mode === 'niche' ? (
                       <>
-                        <div className="relative animate-in fade-in slide-in-from-top-2 duration-300">
-                          <Search className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                           <input 
                             type="text" 
                             placeholder="Nicho (ej. Cripto)"
                             value={params.niche}
                             onChange={e => setParams({...params, niche: e.target.value})}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none placeholder:text-slate-600"
                           />
                         </div>
                         
-                        <div className="relative animate-in fade-in slide-in-from-top-2 duration-300">
-                          <Filter className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                        <div className="relative">
+                          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                           <input 
                             type="text" 
                             placeholder="País (ej. España)"
                             value={params.country}
                             onChange={e => setParams({...params, country: e.target.value})}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none placeholder:text-slate-600"
                           />
                         </div>
-
-                        <div className="relative animate-in fade-in slide-in-from-top-2 duration-300">
-                           <Music className="absolute left-3 top-2.5 text-slate-500" size={16} />
+                        <div className="relative">
+                           <Music className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                            <input 
                              type="text" 
                              placeholder="Estilo Musical (Opcional)"
                              value={params.musicStyle}
                              onChange={e => setParams({...params, musicStyle: e.target.value})}
-                             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
+                             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none placeholder:text-slate-600"
                            />
                         </div>
                       </>
                     ) : (
-                      <div className="relative animate-in fade-in slide-in-from-top-2 duration-300">
-                          <div className="absolute left-3 top-2.5 text-slate-500 font-bold text-sm">@</div>
+                      <div className="relative">
+                          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-sm">@</div>
                           <input 
                             type="text" 
                             placeholder="Usuario Fuente"
                             value={params.sourceUsername}
                             onChange={e => setParams({...params, sourceUsername: e.target.value})}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-8 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors placeholder:text-slate-600"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-8 pr-3 text-sm focus:border-cyan-400 focus:outline-none placeholder:text-slate-600"
                           />
                         </div>
                     )}
 
-                    <div className="relative pt-2">
-                      <Briefcase className="absolute left-3 top-4.5 text-slate-500" size={16} />
+                    <div className="relative mt-2">
+                      <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <select
                         value={params.contactNature}
                         onChange={e => setParams({...params, contactNature: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none transition-colors appearance-none text-slate-300"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none appearance-none text-slate-300"
                       >
                           <option value="Medios y Prensa">Medios y Prensa</option>
                           <option value="Negocios Digitales">Negocios Digitales</option>
@@ -400,9 +396,7 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Range Inputs */}
                   <div className="space-y-3 pt-2 border-t border-slate-800">
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Filtros Mecánicos</label>
                     <div>
                       <label className="text-[10px] text-slate-500 mb-1 block">Cantidad (N)</label>
                       <select 
@@ -441,6 +435,24 @@ const App: React.FC = () => {
                       </>
                     )}
                   </button>
+
+                  {/* UPLOAD BUTTON FOR SCRAPER */}
+                  <div className="pt-2 border-t border-slate-800">
+                    <input 
+                      type="file" 
+                      ref={fileInputRef}
+                      onChange={handleFileUpload}
+                      accept=".csv, .doc"
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 rounded-md text-xs flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <UploadCloud size={14} /> Cargar Sesión Anterior (.CSV/DOC)
+                    </button>
+                  </div>
                   
                   {profiles.length > 0 && (
                     <button 
@@ -470,9 +482,7 @@ const App: React.FC = () => {
             </aside>
 
             {/* Main Content Area */}
-            <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-900 relative">
-              
-              {/* Top Header Stats */}
+            <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900 relative">
               <header className="flex-none h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur-sm z-20">
                 <div className="flex items-center gap-6">
                   <div className="flex flex-col">
@@ -487,36 +497,13 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button 
-                      onClick={() => ExportManager.copyToClipboard(profiles)}
-                      className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors"
-                      title="Copiar"
-                    >
-                      <Copy size={18} />
-                    </button>
-                    <button 
-                        onClick={() => ExportManager.downloadCSV(profiles, params.mode === 'followers' ? `Seguidores_de_${params.sourceUsername}` : params.niche)}
-                        className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors"
-                        title="CSV"
-                    >
-                      <FileSpreadsheet size={18} />
-                    </button>
-                    <button 
-                        onClick={() => ExportManager.downloadHTML(profiles, params.mode === 'followers' ? `Seguidores_de_${params.sourceUsername}` : params.niche)}
-                        className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-md transition-colors"
-                        title="Word"
-                    >
-                      <FileText size={18} /> 
-                    </button>
-                    
-                    {/* Botón para enviar a Campaña */}
+                  <button onClick={() => ExportManager.copyToClipboard(profiles)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors" title="Copiar"><Copy size={18} /></button>
+                  <button onClick={() => ExportManager.downloadCSV(profiles, params.mode === 'followers' ? `Seguidores_de_${params.sourceUsername}` : params.niche)} className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-md transition-colors" title="CSV"><FileSpreadsheet size={18} /></button>
+                  <button onClick={() => ExportManager.downloadHTML(profiles, params.mode === 'followers' ? `Seguidores_de_${params.sourceUsername}` : params.niche)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-md transition-colors" title="Word"><FileText size={18} /> </button>
                     {profiles.length > 0 && (
                       <>
                         <div className="h-6 w-px bg-slate-800 mx-1" />
-                        <button
-                          onClick={handleTransferToCampaign}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-cyan-900/40 hover:bg-cyan-900/60 text-cyan-400 text-xs rounded-md border border-cyan-500/30 transition-colors font-medium animate-in fade-in"
-                        >
+                        <button onClick={handleTransferToCampaign} className="flex items-center gap-2 px-3 py-1.5 bg-cyan-900/40 hover:bg-cyan-900/60 text-cyan-400 text-xs rounded-md border border-cyan-500/30 transition-colors font-medium animate-in fade-in">
                           <Mail size={14} /> Crear Campaña <ArrowRight size={12} />
                         </button>
                       </>
@@ -524,40 +511,25 @@ const App: React.FC = () => {
                 </div>
               </header>
 
-              {/* Progress Bar Container */}
               {(status === AppStatus.Scraping || status === AppStatus.Classifying || (status === AppStatus.Completed && progress > 0)) && (
                 <div className="flex-none w-full bg-slate-950 h-1.5 relative overflow-hidden">
-                  <div 
-                    className={`absolute top-0 left-0 h-full shadow-[0_0_15px_rgba(34,211,238,0.6)] transition-all duration-300 ease-out
-                      ${status === AppStatus.Scraping ? 'bg-amber-500' : 'bg-cyan-500'}
-                    `}
-                    style={{ width: `${progress}%` }}
-                  />
+                  <div className={`absolute top-0 left-0 h-full shadow-[0_0_15px_rgba(34,211,238,0.6)] transition-all duration-300 ease-out ${status === AppStatus.Scraping ? 'bg-amber-500' : 'bg-cyan-500'}`} style={{ width: `${progress}%` }} />
                 </div>
               )}
 
-              {/* Data Table Area */}
               <div className="flex-1 overflow-auto p-6 relative">
-                
                 {error && (
                   <div className="mb-6 p-4 bg-red-900/20 border border-red-500/50 rounded-lg flex items-center gap-3 text-red-200 text-sm">
                     <AlertCircle size={20} />
                     {error}
                   </div>
                 )}
-
                 {profiles.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-600">
                     <div className="w-24 h-24 rounded-full bg-slate-800/50 flex items-center justify-center mb-4 relative">
-                      {params.mode === 'niche' ? (
-                        <Search size={40} className="opacity-20" />
-                      ) : (
-                        <UserPlus size={40} className="opacity-20" />
-                      )}
+                      {params.mode === 'niche' ? <Search size={40} className="opacity-20" /> : <UserPlus size={40} className="opacity-20" />}
                       {(status === AppStatus.Scraping || status === AppStatus.Classifying) && (
-                          <div className={`absolute inset-0 border-2 rounded-full animate-spin
-                            ${status === AppStatus.Scraping ? 'border-amber-500/30 border-t-amber-500' : 'border-cyan-500/30 border-t-cyan-500'}
-                          `}></div>
+                          <div className={`absolute inset-0 border-2 rounded-full animate-spin ${status === AppStatus.Scraping ? 'border-amber-500/30 border-t-amber-500' : 'border-cyan-500/30 border-t-cyan-500'}`}></div>
                       )}
                     </div>
                     <p className="text-lg font-medium">
@@ -591,53 +563,23 @@ const App: React.FC = () => {
                                 <div className="flex flex-col">
                                   <span className="font-bold text-slate-200">@{profile.username}</span>
                                   <span className="text-xs text-slate-500">{profile.fullName}</span>
-                                  {profile.externalUrl && (
-                                    <a 
-                                      href={profile.externalUrl.startsWith('http') ? profile.externalUrl : `https://${profile.externalUrl}`} 
-                                      target="_blank" 
-                                      rel="noreferrer"
-                                      className="text-[10px] text-cyan-600 hover:text-cyan-400 mt-1 truncate max-w-[150px]"
-                                    >
-                                      {profile.externalUrl}
-                                    </a>
-                                  )}
+                                  {profile.externalUrl && <a href={profile.externalUrl.startsWith('http') ? profile.externalUrl : `https://${profile.externalUrl}`} target="_blank" rel="noreferrer" className="text-[10px] text-cyan-600 hover:text-cyan-400 mt-1 truncate max-w-[150px]">{profile.externalUrl}</a>}
                                 </div>
                               </td>
                               <td className="p-4">
-                                <span className={`
-                                  inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium border
-                                  ${profile.category === LeadCategory.MediaPress ? 'bg-purple-900/30 text-purple-400 border-purple-800' : 
-                                    profile.category === LeadCategory.DigitalBusiness ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' :
-                                    profile.category === LeadCategory.Investment ? 'bg-amber-900/30 text-amber-400 border-amber-800' :
-                                    profile.category === LeadCategory.Irrelevant ? 'bg-slate-800 text-slate-500 border-slate-700' :
-                                    'bg-cyan-900/30 text-cyan-400 border-cyan-800'}
-                                `}>
-                                  {profile.category}
-                                </span>
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium border ${profile.category === LeadCategory.MediaPress ? 'bg-purple-900/30 text-purple-400 border-purple-800' : profile.category === LeadCategory.DigitalBusiness ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800' : profile.category === LeadCategory.Investment ? 'bg-amber-900/30 text-amber-400 border-amber-800' : profile.category === LeadCategory.Irrelevant ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-cyan-900/30 text-cyan-400 border-cyan-800'}`}>{profile.category}</span>
                               </td>
-                              <td className="p-4 text-right font-mono text-sm text-slate-300">
-                                {profile.followerCount.toLocaleString()}
-                              </td>
+                              <td className="p-4 text-right font-mono text-sm text-slate-300">{profile.followerCount.toLocaleString()}</td>
                               <td className="p-4">
                                 <div className="flex flex-col gap-1 text-xs">
-                                    {profile.email ? (
-                                      <span className="text-slate-300 select-all">{profile.email}</span>
-                                    ) : (
-                                      <span className="text-slate-600 italic">No email</span>
-                                    )}
+                                    {profile.email ? <span className="text-slate-300 select-all">{profile.email}</span> : <span className="text-slate-600 italic">No email</span>}
                                     {profile.phone && <span className="text-slate-500 select-all">{profile.phone}</span>}
                                 </div>
                               </td>
                               <td className="p-4">
                                 <div className="flex items-center gap-2">
                                   <div className="flex-1 w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                    <div 
-                                      className={`h-full rounded-full ${
-                                        profile.relevanceScore > 80 ? 'bg-green-500' : 
-                                        profile.relevanceScore > 50 ? 'bg-yellow-500' : 'bg-red-500'
-                                      }`} 
-                                      style={{ width: `${profile.relevanceScore}%` }}
-                                    />
+                                    <div className={`h-full rounded-full ${profile.relevanceScore > 80 ? 'bg-green-500' : profile.relevanceScore > 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${profile.relevanceScore}%` }} />
                                   </div>
                                   <span className="text-[10px] text-slate-500">{profile.relevanceScore}%</span>
                                 </div>
@@ -651,8 +593,7 @@ const App: React.FC = () => {
                 )}
               </div>
             </main>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,16 @@ export enum LeadCategory {
   Irrelevant = "Ruido / Irrelevante"
 }
 
+export enum MediaCategory {
+  RadioMusical = "Radio Musical",
+  RadioInformativa = "Radio Informativa",
+  TVEntretenimiento = "TV Entretenimiento",
+  TVNoticias = "TV Noticias",
+  VoiceOver = "Voice-Over Publicitario",
+  PodcastHost = "Podcast Host",
+  FanAccount = "Fan / Parodia (Descartar)"
+}
+
 // Data shape returned by the Node.js Mechanical Scraper
 export interface RawProfile {
   username: string;
@@ -19,14 +29,16 @@ export interface RawProfile {
   email: string | null; // Extracted via Regex in Node.js
   phone: string | null; // Extracted via Regex in Node.js
   isScraped: boolean;
+  sourceNiche?: string; // New field for source tracking
 }
 
 // Data shape after AI Enrichment
 export interface Profile extends RawProfile {
   id: string;
-  category: LeadCategory; // AI Determined
+  category: LeadCategory | MediaCategory | string; // AI Determined
   relevanceScore: number; // AI Determined
   scrapedAt: string;
+  mediaOutlet?: string; // Specific for Media Talent (Station/Channel)
 }
 
 export type SearchMode = 'niche' | 'followers';
@@ -40,6 +52,14 @@ export interface SearchParams {
   musicStyle: string; // Optional field for Media searches
   minFollowers: number;
   maxFollowers: number;
+  resultsCount: number;
+}
+
+export interface MediaTalentSearchParams {
+  country: string;
+  role: string; // e.g., "Locutor", "Presentador"
+  languageAccent: string; // e.g., "Español Neutro", "Castellano"
+  musicGenre?: string; // Optional: Filter by musical affinity
   resultsCount: number;
 }
 
@@ -57,7 +77,7 @@ export enum AppStatus {
 }
 
 // New Types for Email Marketing
-export type ViewMode = 'scraper' | 'campaign' | 'analytics' | 'settings';
+export type ViewMode = 'scraper' | 'media-talent' | 'campaign' | 'analytics' | 'settings';
 
 export interface MailgunConfig {
   // SMTP Config
