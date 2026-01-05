@@ -132,7 +132,7 @@ const App: React.FC = () => {
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (params.mode === 'niche' && (!params.niche || !params.country)) {
-        setError("Por favor define un Nicho y un País.");
+        setError("Por favor define un Nicho y un País/Ciudad.");
         return;
     }
     
@@ -349,7 +349,7 @@ const App: React.FC = () => {
                           <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                           <input 
                             type="text" 
-                            placeholder="País (ej. España)"
+                            placeholder="País o Ciudad (ej. España, Bogotá)"
                             value={params.country}
                             onChange={e => setParams({...params, country: e.target.value})}
                             className="w-full bg-slate-900 border border-slate-700 rounded-md py-2 pl-10 pr-3 text-sm focus:border-cyan-400 focus:outline-none placeholder:text-slate-600"

@@ -9,7 +9,7 @@ import { Mic2, Radio, Tv, Globe, Loader2, Play, Users, FileText, CheckCircle2, A
 export const MediaTalentView: React.FC = () => {
   const [params, setParams] = useState<MediaTalentSearchParams>({
     country: '',
-    role: 'Locutor Comercial',
+    role: '',
     languageAccent: 'Español Neutro',
     musicGenre: '',
     resultsCount: 10
@@ -27,8 +27,8 @@ export const MediaTalentView: React.FC = () => {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!params.country) {
-      setError("Por favor define el País objetivo.");
+    if (!params.country || !params.role) {
+      setError("Por favor define el País/Ciudad y el Rol Profesional.");
       return;
     }
     
@@ -124,11 +124,11 @@ export const MediaTalentView: React.FC = () => {
             
             <div className="space-y-4">
               <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
-                <Globe size={12} /> Target Market
+                <Globe size={12} /> Target Market (País / Ciudad)
               </label>
               <input 
                 type="text" 
-                placeholder="País (ej. México, España)"
+                placeholder="País o Ciudad (ej. CDMX, España)"
                 value={params.country}
                 onChange={e => setParams({...params, country: e.target.value})}
                 className="w-full bg-indigo-900/50 border border-indigo-700 rounded-md py-3 px-4 text-sm text-white focus:border-blue-400 focus:outline-none placeholder:text-indigo-400/50 transition-all shadow-inner"
@@ -139,21 +139,13 @@ export const MediaTalentView: React.FC = () => {
               <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
                 <Radio size={12} /> Rol Profesional
               </label>
-              <div className="relative">
-                <select
-                  value={params.role}
-                  onChange={e => setParams({...params, role: e.target.value})}
-                  className="w-full bg-indigo-900/50 border border-indigo-700 rounded-md py-3 px-4 text-sm text-white focus:border-blue-400 focus:outline-none appearance-none shadow-inner"
-                >
-                  <option value="Locutor Comercial">Locutor Comercial</option>
-                  <option value="Radio Host">Radio Host (Morning Show)</option>
-                  <option value="TV Anchor">Presentador Noticias TV</option>
-                  <option value="TV Host">Conductor Entretenimiento</option>
-                  <option value="Voice Over Artist">Actor de Doblaje / Voice Over</option>
-                  <option value="Sports Journalist">Periodista Deportivo</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-400">▼</div>
-              </div>
+              <input 
+                type="text" 
+                placeholder="Ej. Locutor Comercial, Presentador, Podcast Host..."
+                value={params.role}
+                onChange={e => setParams({...params, role: e.target.value})}
+                className="w-full bg-indigo-900/50 border border-indigo-700 rounded-md py-3 px-4 text-sm text-white focus:border-blue-400 focus:outline-none placeholder:text-indigo-400/50 transition-all shadow-inner"
+              />
             </div>
 
             <div className="space-y-4">
@@ -174,11 +166,11 @@ export const MediaTalentView: React.FC = () => {
 
             <div className="space-y-4">
                <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
-                <Mic2 size={12} /> Acento / Idioma
+                <Mic2 size={12} /> Idioma
               </label>
                <input 
                 type="text" 
-                placeholder="ej. Español Neutro, Acento Paisa"
+                placeholder="Español"
                 value={params.languageAccent}
                 onChange={e => setParams({...params, languageAccent: e.target.value})}
                 className="w-full bg-indigo-900/50 border border-indigo-700 rounded-md py-3 px-4 text-sm text-white focus:border-blue-400 focus:outline-none placeholder:text-indigo-400/50 transition-all shadow-inner"
